@@ -9,6 +9,13 @@ from [mimalloc-bench](https://github.com/daanx/mimalloc-bench).
 ```
 .
 ├── README.md
+├── docs/                    project context, proposal, report drafts
+├── src/                     simulator sources
+│   └── heap.h, heap.cpp     simulated heap: sbrk-style growth, boundary tags,
+│                            split/coalesce primitives, heap checker (HEAP_CHECK)
+├── tests/                   dev-only unit tests, NOT called by run.sh
+│   ├── test_heap.cpp        heap tests (unit, checker negative, random stress)
+│   └── run_tests.sh         builds + runs tests at -O2 and with ASan/UBSan
 ├── traces/                  bundled workloads (input data for run.sh)
 │   ├── *.trace.gz           one gzip'd text trace per benchmark
 │   ├── stats.csv            statistics of the bundled (truncated) traces
@@ -20,6 +27,40 @@ from [mimalloc-bench](https://github.com/daanx/mimalloc-bench).
     ├── capture.sh           runs each benchmark under the shim -> traces/*.trace.gz
     └── verify_traces.sh     strictly re-validates every bundled trace (portable)
 ```
+
+## Running the tests
+
+`run.sh` (the grading entry point) is not written yet. To test the heap on
+Linux or WSL with g++ or clang++:
+
+```bash
+bash tests/run_tests.sh            # default 100000 random stress ops
+bash tests/run_tests.sh 1000000    # longer stress run (release build only)
+```
+
+The tests use no allocation policy. They call the heap's primitives (`extend`,
+`split`, `set_alloc`, `coalesce`) directly and run the heap checker after every
+operation.
+
+## Simulated heap layout
+
+The heap is a `std::vector<uint8_t>` that only grows, through `heap_extend`
+(the `sbrk` analogue). Blocks are named by the **offset of their header**.
+Block offsets and sizes are multiples of 16, and the minimum block is 32 B
+(header + `prev` + `next` + footer).
+
+```
+0        8        16                                    brk-8      brk
+| pro hdr| pro ftr| block | block | ... | block |  epilogue hdr  |
+```
+
+- Every block has a header and a footer, each storing `size | flags`. Bit 0
+  means allocated; bit 1 means the previous block is allocated. Bit 1 is kept
+  accurate now so that footer elimination can be added later.
+- The payload starts at `offset + 8`. A free block keeps its explicit-list
+  links at `offset + 8` (`prev`) and `offset + 16` (`next`).
+- `coalesce(off, remove_free)` is policy-independent. It calls back for each
+  free neighbour so the policy can unlink it before it is absorbed.
 
 ## Trace format (parsing contract)
 
